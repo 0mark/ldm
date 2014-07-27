@@ -69,16 +69,6 @@ static char *g_callback_path;
 
 #define LOG(...) do { if (g_verbose) fprintf(stderr, __VA_ARGS__); } while(0);
 
-/* A less stupid strdup */
-
-char *
-xstrdup(const char *str)
-{
-    if (!str)
-        return NULL;
-    return (char *)strdup(str);
-}
-
 /* A less stupid strcmp */
 
 int
@@ -313,7 +303,7 @@ device_create_mountpoint (struct device_t *device)
         strcat(tmp, "_");
     }
 
-    return xstrdup(tmp);
+    return strdup(tmp);
 }
 
 int
@@ -411,18 +401,19 @@ device_new (struct udev_device *dev)
 
     device->udev = dev;
     device->kind = dev_kind;
-    device->node = xstrdup(dev_node);
+    device->node = strdup(dev_node);
     device->rnode = mnt_resolve_path(dev_node, NULL);
-    device->filesystem = xstrdup(dev_fs);
+    device->filesystem = strdup(dev_fs);
 
     /* Increment the refcount */
     udev_device_ref(device->udev);
 
     fstab_entry = fstab_search(g_fstab, device->udev);
 
-    device->mountpoint = (fstab_entry) ?
-        xstrdup(mnt_fs_get_target(fstab_entry)) :
-        device_create_mountpoint(device);
+    if (fstab_entry && mnt_fs_get_target(fstab_entry))
+        device->mountpoint = strdup(mnt_fs_get_target(fstab_entry));
+    else
+        device->mountpoint = device_create_mountpoint(device);
 
     if (!device->mountpoint) {
         syslog(LOG_ERR, "Couldn't make up a mountpoint name. Please report this bug.");
@@ -757,10 +748,10 @@ main (int argc, char *argv[])
                 g_uid = (int)strtoul(optarg, NULL, 10);
                 break;
             case 'p':
-                g_mount_path = xstrdup(optarg);
+                g_mount_path = strdup(optarg);
                 break;
             case 'c':
-                g_callback_path = xstrdup(optarg);
+                g_callback_path = strdup(optarg);
                 break;
             case 'V':
                 g_verbose = 1;
@@ -789,7 +780,7 @@ main (int argc, char *argv[])
 
     /* A not-so-safe default */
     if (!g_mount_path)
-        g_mount_path = xstrdup("/mnt");
+        g_mount_path = strdup("/mnt");
 
     /* Check anyways */
     if (!isdir(g_mount_path)) {
@@ -804,7 +795,7 @@ main (int argc, char *argv[])
     /* Sanitize before use */
     strip_slash(g_mount_path);
 
-    if (0 && getuid() != 0) {
+    if (getuid() != 0) {
         fprintf(stderr, "You have to run this program as root!\n");
         return EXIT_FAILURE;
     }
