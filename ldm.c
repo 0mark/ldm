@@ -15,6 +15,7 @@
 #include <libmount/libmount.h>
 #include <errno.h>
 #include <dirent.h>
+#include <sys/queue.h>
 
 #define VERSION_STR "0.5.1"
 
@@ -40,6 +41,7 @@ typedef struct device_t {
     char *filesystem;
     char *mountpoint;
     struct udev_device *udev;
+    TAILQ_ENTRY(device_t) ptr;
 } device_t;
 
 typedef struct fs_quirk_t {
@@ -48,7 +50,6 @@ typedef struct fs_quirk_t {
 } fs_quirk_t;
 
 #define OPT_FMT         "uid=%i,gid=%i"
-#define MAX_DEVICES     20
 #define FSTAB_PATH      "/etc/fstab"
 #define MTAB_PATH       "/proc/self/mounts"
 #define LOCK_PATH       "/run/ldm.pid"
@@ -58,7 +59,7 @@ typedef struct fs_quirk_t {
 
 static struct libmnt_table *g_fstab;
 static struct libmnt_table *g_mtab;
-static struct device_t *g_devices[MAX_DEVICES];
+static TAILQ_HEAD(, device_t) g_devices;
 static FILE *g_lockfd;
 static int g_running;
 static int g_verbose;
@@ -318,59 +319,33 @@ device_create_mountpoint (struct device_t *device)
 int
 device_register (struct device_t *dev)
 {
-    int j;
-
-    for (j = 0; j < MAX_DEVICES; j++) {
-        if (g_devices[j] == NULL) {
-            g_devices[j] = dev;
-            return 1;
-        }
-    }
-
-    return 0;
+    TAILQ_INSERT_HEAD(&g_devices, dev, ptr);
+    return 1;
 }
 
 void
 device_destroy (struct device_t *dev)
 {
-    int j;
-
-    for (j = 0; j < MAX_DEVICES; j++) {
-        if (g_devices[j] == dev)
-            break;
-    }
-
     free(dev->node);
     free(dev->rnode);
     free(dev->filesystem);
     free(dev->mountpoint);
     udev_device_unref(dev->udev);
-
     free(dev);
-
-    /* Might happen that we have to destroy a device not yet
-     * registered. Just free it */
-    if (j < MAX_DEVICES)
-        g_devices[j] = NULL;
 }
 
 /* Path is either the /dev/ node or the mountpoint */
 struct device_t *
 device_search (const char *path)
 {
-    int j;
     device_t *dev;
 
     if (!path)
         return NULL;
 
-    for (j = 0; j < MAX_DEVICES; j++) {
-        dev = g_devices[j];
-
-        if (dev) {
-            if (!xstrcmp(dev->node, path) || !xstrcmp(dev->rnode, path) || !xstrcmp(dev->mountpoint, path))
-                return g_devices[j];
-        }
+    TAILQ_FOREACH(dev, &g_devices, ptr) {
+        if (!xstrcmp(dev->node, path) || !xstrcmp(dev->rnode, path) || !xstrcmp(dev->mountpoint, path))
+                return dev;
     }
 
     return NULL;
@@ -451,11 +426,13 @@ device_new (struct udev_device *dev)
 
     if (!device->mountpoint) {
         syslog(LOG_ERR, "Couldn't make up a mountpoint name. Please report this bug.");
+        TAILQ_REMOVE(&g_devices, device, ptr);
         device_destroy(device);
         return NULL;
     }
 
     if (!device_register(device)) {
+        TAILQ_REMOVE(&g_devices, device, ptr);
         device_destroy(device);
         return NULL;
     }
@@ -489,6 +466,7 @@ device_unmount (struct udev_device *dev)
 
     spawn_helper(g_callback_path, device->rnode, "unmount", device->mountpoint);
 
+    TAILQ_REMOVE(&g_devices, device, ptr);
     device_destroy(device);
 
     return 1;
@@ -615,25 +593,24 @@ handle_ipc_event (char *msg)
 void
 check_registered_devices (void)
 {
-    int j;
+    device_t *dev;
 
     /* Drop all the devices in the table that aren't mounted anymore */
-    for (j = 0; j < MAX_DEVICES; j++) {
-        if (g_devices[j] && !device_is_mounted(g_devices[j]->udev))
-            device_unmount(g_devices[j]->udev);
+    TAILQ_FOREACH(dev, &g_devices, ptr) {
+        if (!device_is_mounted(dev->udev)) {
+            device_unmount(dev->udev);
+        }
     }
-
 }
 
 void
 device_list_clear (void)
 {
-    int j;
+    device_t *dev;
 
-    for (j = 0; j < MAX_DEVICES; j++) {
-        if (g_devices[j])
-            device_unmount(g_devices[j]->udev);
-        g_devices[j] = NULL;
+    while (dev = TAILQ_FIRST(&g_devices)) {
+        /* 'dev' is freed in device_unmount */
+        device_unmount(dev->udev);
     }
 }
 
@@ -827,7 +804,7 @@ main (int argc, char *argv[])
     /* Sanitize before use */
     strip_slash(g_mount_path);
 
-    if (getuid() != 0) {
+    if (0 && getuid() != 0) {
         fprintf(stderr, "You have to run this program as root!\n");
         return EXIT_FAILURE;
     }
@@ -890,6 +867,8 @@ main (int argc, char *argv[])
         syslog(LOG_ERR, "Cannot set the filter");
         goto cleanup;
     }
+
+    TAILQ_INIT(&g_devices);
 
     /* Clear the devices array */
     device_list_clear();
