@@ -924,7 +924,7 @@ main (int argc, char *argv[])
         if (pollfd[1].revents & POLLIN) {
             read(pollfd[1].fd, &event, sizeof(struct inotify_event));
 
-            if (mnt_table_parse_fstab(g_fstab, NULL) < 0)
+            if (!(g_fstab = update_mnt_table(FSTAB_PATH, g_fstab)))
                 break;
         }
         /* mtab change */
