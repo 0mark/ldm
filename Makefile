@@ -1,5 +1,5 @@
 CC ?= gcc
-CFLAGS := -O2 $(CFLAGS)
+CFLAGS := -O2 -DJSMN_STRICT $(CFLAGS)
 LDFLAGS := -ludev -lmount $(LDFLAGS)
 CFDEBUG = -g3 -pedantic -Wall -Wunused-parameter -Wlong-long
 CFDEBUG += -Wsign-conversion -Wconversion -Wimplicit-function-declaration
@@ -9,7 +9,7 @@ BINDIR ?= $(PREFIX)/bin
 SYSTEMDDIR ?= $(PREFIX)/lib/systemd
 
 EXEC = ldm
-SRCS = ldm.c
+SRCS = ldm.c jsmn.c
 OBJS = $(SRCS:.c=.o)
 
 all: $(EXEC) doc
